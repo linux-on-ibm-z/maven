@@ -23,7 +23,7 @@ def buildOs = 'linux'
 def buildJdk = '8'
 def buildMvn = '3.8.x'
 def runITsOses = ['linux']
-def runITsJdks = ['17']
+def runITsJdks = ['1.8', '11', '17']
 def runITsMvn = '3.8.x'
 def runITscommand = "mvn clean install -Prun-its,embedded -B -U -V" // -DmavenDistro=... -Dmaven.test.failure.ignore=true
 def tests
@@ -75,7 +75,7 @@ for (String os in runITsOses) {
         //String jdkName = jenkinsEnv.jdkFromVersion(os, "${jdk}")
         //String mvnName = jenkinsEnv.mvnFromVersion(os, "${runITsMvn}")
         String osLabel = "Ubuntu";
-        String jdkName = "jdk_17_latest";
+        String jdkName = "jdk_${jdk}_latest";
         String mvnName = "maven_3_latest";
 
         echo "OS: ${os} JDK: ${jdk} => Label: ${osLabel} JDK: ${jdkName}"
@@ -167,7 +167,7 @@ parallel(runITsTasks)
 } finally {
     // notify completion
     stage("Notifications") {
-        jenkinsNotify()
+        //jenkinsNotify()
     }
 }
 
