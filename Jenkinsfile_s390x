@@ -50,8 +50,8 @@ node('s390x'){
         stage('Build / Unit Test') {
             //String jdkName = jenkinsEnv.jdkFromVersion(buildOs, buildJdk)
             //String mvnName = jenkinsEnv.mvnFromVersion(buildOs, buildMvn)
-            String jdkName = "jdk_17_latest"
-            String mvnName = "maven_3.8"
+            String jdkName = "jdk_1.8_latest"
+            String mvnName = "maven_3_latest"
             try {
                 withEnv(["JAVA_HOME=${ tool "$jdkName" }",
                          "PATH+MAVEN=${ tool "$jdkName" }/bin:${tool "$mvnName"}/bin",
@@ -76,7 +76,7 @@ for (String os in runITsOses) {
         //String mvnName = jenkinsEnv.mvnFromVersion(os, "${runITsMvn}")
         String osLabel = "Ubuntu";
         String jdkName = "jdk_17_latest";
-        String mvnName = "maven_3.8";
+        String mvnName = "maven_3_latest";
 
         echo "OS: ${os} JDK: ${jdk} => Label: ${osLabel} JDK: ${jdkName}"
 
