@@ -25,7 +25,8 @@ def buildMvn = '3.8.x'
 def runITsOses = ['linux']
 def runITsJdks = ['11', '17']
 def runITsMvn = '3.8.x'
-def runITscommand = "mvn clean install -Prun-its,embedded -B -U -V" // -DmavenDistro=... -Dmaven.test.failure.ignore=true
+//def runITscommand = "mvn clean install -Prun-its,embedded -B -U -V" // -DmavenDistro=... -Dmaven.test.failure.ignore=true
+def runITscommand = "mvn clean install -PskipTests -B -U -V"
 def tests
 
 try {
@@ -43,7 +44,7 @@ node('s390x'){
 
         stage('Configure deploy') {
            if (env.BRANCH_NAME in ['master', 'maven-3.8.x', 'maven-3.9.x']){
-               MAVEN_GOAL='deploy'
+               MAVEN_GOAL='install'
            }
         }
 
@@ -56,7 +57,7 @@ node('s390x'){
                 withEnv(["JAVA_HOME=${ tool "$jdkName" }",
                          "PATH+MAVEN=${ tool "$jdkName" }/bin:${tool "$mvnName"}/bin",
                          "MAVEN_OPTS=-Xms2g -Xmx4g -Djava.awt.headless=true"]) {                   
-                    sh "mvn clean ${MAVEN_GOAL} -B -U -e -fae -V -Dmaven.test.failure.ignore -PversionlessMavenDist -Dmaven.repo.local=${WORK_DIR}/.repository"
+                    sh "mvn clean ${MAVEN_GOAL} -B -U -e -fae -V -DskipTests -Dmaven.test.failure.ignore -PversionlessMavenDist -Dmaven.repo.local=${WORK_DIR}/.repository"
                 }
             } finally {
                 junit testResults: '**/target/surefire-reports/*.xml,**/target/failsafe-reports/*.xml', allowEmptyResults: true
@@ -80,7 +81,7 @@ for (String os in runITsOses) {
 
         echo "OS: ${os} JDK: ${jdk} => Label: ${osLabel} JDK: ${jdkName}"
 
-        String stageId = "${os}-jdk${jdk}"
+        String stageId = "${os}-jdk${jdk}-s390x"
         String stageLabel = "Run ITs ${os.capitalize()} Java ${jdk}"
         runITsTasks[stageId] = {
             //node(jenkinsEnv.nodeSelection(osLabel)) {
@@ -168,7 +169,7 @@ parallel(runITsTasks)
     // notify completion
     stage("Notifications") {
         //jenkinsNotify()
-        echo "Notifications"
+        notify_s390x()
     }
 }
 
@@ -177,5 +178,103 @@ def archiveDirs(stageId, archives) {
         if (fileExists(pathToContent)) {
             zip(zipFile: "${archivePrefix}-${stageId}.zip", dir: pathToContent, archive: true)
         }
+    }
+}
+
+def notify_s390x() {
+    echo "Build result: ${currentBuild.currentResult}"
+    // determine the message details
+    def providers
+    def messageBody
+    def messageTail = ''
+    def messageSubject
+    def sendMail
+    switch(currentBuild.currentResult) {
+        case "SUCCESS":
+            providers = []
+            messageSubject = "Build succeeded in Jenkins: ${currentBuild.fullDisplayName}"
+            messageBody = """See ${currentBuild.absoluteUrl}"""
+            // only send successfuly builds if the previous build was unsuccessful or incomplete
+            sendMail = currentBuild.previousBuild == null || !"SUCCESS".equals(currentBuild.previousBuild.result)
+        break
+        case "UNSTABLE":
+            providers = [[$class: 'CulpritsRecipientProvider']]
+            messageSubject = "Build unstable in Jenkins: ${currentBuild.fullDisplayName}"
+            messageBody = """See ${currentBuild.absoluteUrl}"""
+            sendMail = true
+            messageTail = '\nBuild log:\n${BUILD_LOG}'
+        break
+        case "FAILURE":
+            providers = [[$class: 'CulpritsRecipientProvider']]
+            messageSubject = "Build failed in Jenkins: ${currentBuild.fullDisplayName}"
+            messageBody = """See ${currentBuild.absoluteUrl}"""
+            sendMail = true
+            messageTail = '\nBuild log:\n${BUILD_LOG}'
+        break
+        case "ABORTED":
+            providers = [[$class: 'CulpritsRecipientProvider']]
+            messageSubject = "Build aborted in Jenkins: ${currentBuild.fullDisplayName}"
+            messageBody = """See ${currentBuild.absoluteUrl}"""
+            sendMail = true
+            messageTail = '\nBuild log:\n${BUILD_LOG}'
+        break
+        default:
+            echo "Unknown status: ${currentBuild.currentResult}"
+        // should never happen if we are actually being invoked.
+        return
+    }
+
+    // comment on any jira tickets
+    def jiraIssues = null
+    def jiraMavens = []
+    try {
+        jiraIssues = jiraIssueSelector(issueSelector: [$class: 'DefaultIssueSelector'])
+        for (def jiraIssue in jiraIssues) {
+            // only comment on maven's issues, all our trackers start with M
+            // may end up commenting on other TLPs in some cases but should be very rare
+            if (jiraIssue.startsWith("M")) {
+                try {
+                    jiraComment body: "${messageSubject}\n\n${messageBody}", issueKey: jiraIssue
+                } catch (e) {
+                    echo "WARNING: Could not update ${jiraIssue}: ${e.message}"
+                }
+                jiraMavens += jiraIssue
+            }
+        }
+    } catch (e) {
+        echo "WARNING: Could not determine JIRA issues: ${e.message}"
+    }
+    // set the build description to the jira ticket id's
+    if (!jiraMavens.empty) {
+        currentBuild.description = "${jiraMavens.join(', ')}"
+    }
+
+    // add the changes to the email
+	def authors = []
+    if (currentBuild.changeSets.isEmpty() ) {
+        messageBody = messageBody + "\n\nNo changes.\n";
+    } else {
+        messageBody = messageBody + "\n\nChanges:\n";
+        for (def changeSet in currentBuild.changeSets) {
+            for (def change in changeSet) {
+                messageBody = messageBody + "\n* ${change.msg.trim().replaceAll('\n','\n  ')}"
+                authors += change.author.id
+            }
+        }
+        messageBody = messageBody + "\n"
+    }
+    println("The authors of changes ${authors.unique()}.")
+    for (def author in authors) {
+		if (author.matches('(.*)github(.*)')) sendMail = false
+    }
+    
+    if (authors.isEmpty()) sendMail = false
+    
+    if (sendMail) {
+        messageBody = messageBody + '\n${FAILED_TESTS}\n' + messageTail
+        println("Sending email ...")
+        println("message Subject --- ${messageSubject}")
+        println("message body --- ${messageBody}")
+        //emailext body: messageBody, recipientProviders: providers, replyTo: 'dev@maven.apache.org', subject: messageSubject, to: 'notifications@maven.apache.org'
     }
 }
